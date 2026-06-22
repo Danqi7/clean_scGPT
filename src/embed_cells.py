@@ -7,6 +7,8 @@ import scgpt.preprocess as scgpt_preprocess
 import scanpy as sc
 import pickle
 
+import torch
+
 def embed_cells(adata, model_dir='../pretrained_weights/scGPT_human/'):
     data_is_raw = True
     n_bins = 51
@@ -39,7 +41,7 @@ def embed_cells(adata, model_dir='../pretrained_weights/scGPT_human/'):
         model_dir,
         gene_col=gene_col,
         obs_to_save=cell_type_key,  # optional arg, only for saving metainfo
-        batch_size=64,
+        batch_size=128,
         return_new_adata=True,
     )
 
@@ -60,6 +62,7 @@ if __name__ == "__main__":
     adata = adata[ :, ~adata.var['gene_symbol'].isna() ]
     print(f"Embedding adata of shape {adata.shape} ...")
 
+    # import pdb; pdb.set_trace()
     _, og_embeddings = embed_cells(adata)
 
     # save the embeddings

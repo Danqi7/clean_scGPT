@@ -15,4 +15,5 @@ dependencies = [
     "torchtext>=0.17.0,<0.18.0",
     "pyarrow<19.0.0", # <-- Add this safety constraint
     "scgpt",
+    "torch-geometric>=2.8.0",
 ]
