@@ -244,6 +244,7 @@ def train_one_epoch(
     criterion,
     optimizer,
     scaler,
+    scheduler,
     args,
     epoch: int,
     n_genes: int,
@@ -257,6 +258,7 @@ def train_one_epoch(
     start_time = time.time()
     num_batches = len(train_loader)
 
+    step = 0
     for batch, batch_data in enumerate(train_loader):
         batch_size = len(batch_data.y)
         batch_data.to(device)
@@ -312,7 +314,7 @@ def train_one_epoch(
         scaler.unscale_(optimizer)
         with warnings.catch_warnings(record=True) as w:
             warnings.filterwarnings("always")
-            torch.nn.utils.clip_grad_norm_(
+            norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), 1.0,
                 error_if_nonfinite=False if scaler.is_enabled() else True,
             )
@@ -326,6 +328,9 @@ def train_one_epoch(
 
         total_loss += loss.item()
         total_mse  += loss_mse.item()
+        print(f"Epoch {epoch}, Step {step+1} | Loss: {loss.item():.4f} | LR: {scheduler.get_last_lr()[0]:.4f} | Scaler: {scaler.get_scale()} | Norm: {norm:.4f}")
+        step += 1
+
 
         if batch % args.log_interval == 0 and batch > 0:
             lr_now = optimizer.param_groups[0]["lr"]
@@ -554,17 +559,35 @@ def main():
     # Manually align splits
     if not prepare_split_in_data_loading:
         test_perts = sorted([p for p in nano_test_loader.dataset.perturbations if p != "ctrl"])
-        pert_data.prepare_split(only_test_set_perts=True, test_pert_genes=test_perts, seed=args.seed)
+        val_perts = sorted([p for p in nano_val_loader.dataset.perturbations if p != "ctrl"])
+        pert_data.prepare_split(only_test_set_perts=True, test_pert_genes=test_perts, 
+                                only_val_set_perts=True, val_perts=val_perts,
+                                seed=args.seed)
         pert_data.get_dataloader(
             batch_size=args.batch_size,
             test_batch_size=args.eval_batch_size,
         )
 
     # yours
+    print('checking test perturbations...')
+    print(sorted(pert_data.set2conditions['test']))
+
     print('Checking test perturbations...')
     print(sorted(nano_test_loader.dataset.perturbations))
     # OG
     print(sorted(pert_data.set2conditions['test']))
+    print('Checking val perturbations...')
+    print(sorted(nano_val_loader.dataset.perturbations))
+    print(sorted(pert_data.set2conditions['val']))
+
+    # checking val, test data size
+    print(f"Val data size: {len(pert_data.dataloader['val_loader'].dataset)}")
+    print(f"Test data size: {len(pert_data.dataloader['test_loader'].dataset)}")
+    # nano
+    print(f"Val data size: {len(nano_val_loader.dataset)}")
+    print(f"Test data size: {len(nano_test_loader.dataset)}")
+
+    import pdb; pdb.set_trace()
 
     vocab, genes, gene_ids = build_vocab(args, pert_data, logger)
     n_genes = len(genes)
@@ -603,7 +626,7 @@ def main():
         valid_loader = pert_data.dataloader["val_loader"]
 
         train_one_epoch(
-            model, train_loader, criterion, optimizer, scaler,
+            model, train_loader, criterion, optimizer, scaler, scheduler,
             args, epoch, n_genes, gene_ids, device, logger,
         )
 
