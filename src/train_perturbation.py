@@ -49,6 +49,9 @@ from scgpt.utils import (
     load_pretrained
 )
 
+from nano_scgpt.scGPT_tokenizer import scGPTTokenizer
+from nano_scgpt.perturbation_data import PerturbationDataSplitter, PerturbationDataset
+
 matplotlib.rcParams["savefig.transparent"] = False
 warnings.filterwarnings("ignore")
 
@@ -117,16 +120,34 @@ def parse_args() -> argparse.Namespace:
 # Data
 # ---------------------------------------------------------------------------
 
-def load_data(args) -> PertData:
+def load_data(args, prepare_split=True) -> PertData:
     pert_data = PertData(args.data_dir)
     pert_data.load(data_name=args.data_name)
-    pert_data.prepare_split(split=args.split, seed=1)
-    pert_data.get_dataloader(
-        batch_size=args.batch_size,
-        test_batch_size=args.eval_batch_size,
-    )
+    if prepare_split:
+        pert_data.prepare_split(split=args.split, seed=1)
+        pert_data.get_dataloader(
+            batch_size=args.batch_size,
+            test_batch_size=args.eval_batch_size,
+        )
     return pert_data
 
+
+def load_nano_data(adata, batch_size, seed):
+    adata.var['gene_symbol'] = adata.var['gene_name']
+
+    tokenizer = scGPTTokenizer.from_pretrained("scGPT_human")
+    tokenizer.max_length = 1536
+    data_splitter = PerturbationDataSplitter(adata, tokenizer, seed=seed)
+    train_adata, val_adata, test_adata = data_splitter.get_train_val_test()
+
+    train_dataset = PerturbationDataset(train_adata, tokenizer, split='train')
+    test_dataset = PerturbationDataset(test_adata, tokenizer, split='test')
+    val_dataset = PerturbationDataset(val_adata, tokenizer, split='val')
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=train_dataset.collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=test_dataset.collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=val_dataset.collate_fn)
+
+    return train_loader, val_loader, test_loader, tokenizer
 
 def build_vocab(args, pert_data: PertData, logger):
     special_tokens = [args.pad_token, "<cls>", "<eoc>"]
@@ -522,8 +543,28 @@ def main():
     logger.info(f"Args: {vars(args)}")
 
     # ---- Data ---------------------------------------------------------------
+    prepare_split_in_data_loading = False
     logger.info("Loading perturbation data...")
-    pert_data = load_data(args)
+    pert_data = load_data(args, prepare_split=prepare_split_in_data_loading)
+
+    nano_train_loader, nano_val_loader, nano_test_loader, tokenizer = load_nano_data(
+        pert_data.adata, args.batch_size, seed=args.seed
+    )
+
+    # Manually align splits
+    if not prepare_split_in_data_loading:
+        test_perts = sorted([p for p in nano_test_loader.dataset.perturbations if p != "ctrl"])
+        pert_data.prepare_split(only_test_set_perts=True, test_pert_genes=test_perts, seed=args.seed)
+        pert_data.get_dataloader(
+            batch_size=args.batch_size,
+            test_batch_size=args.eval_batch_size,
+        )
+
+    # yours
+    print('Checking test perturbations...')
+    print(sorted(nano_test_loader.dataset.perturbations))
+    # OG
+    print(sorted(pert_data.set2conditions['test']))
 
     vocab, genes, gene_ids = build_vocab(args, pert_data, logger)
     n_genes = len(genes)
